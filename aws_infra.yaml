@@ -1,0 +1,96 @@
+---
+- name: "Creating Infra"
+  hosts: localhost
+  become: false
+  vars:
+    default_vpc_id: vpc-029ba8545bf5c957d
+    ami_id: ami-04a37924ffe27da53  
+    common_tags:
+      project_name: ansible-project
+      project_environment: testing
+      project_owner: binu
+  vars_files:
+    - aws_credentials.yaml
+
+  tasks:
+    - name: "Amazon Infra - Creating keyPair"
+      amazon.aws.ec2_key:
+        region: "{{ aws_region }}"
+        access_key: "{{ aws_access_key }}"
+        secret_key: "{{ aws_secret_key }}"
+        name: "{{ common_tags.project_name }}-{{ common_tags.project_environment }}"
+        tags: "{{ common_tags }}"
+      register: aws_keypair_return
+
+    - name: "Amazon Infra - Saving Private"
+      when: aws_keypair_return.changed
+      copy:
+        content: "{{ aws_keypair_return.key.private_key }}"
+        dest: "./{{ common_tags.project_name }}-{{ common_tags.project_owner }}.pem"
+        mode: "0400"
+
+    - name: "AWS Infra SecurityGroup 22"
+      amazon.aws.ec2_security_group:
+        region: "{{ aws_region }}"
+        access_key: "{{ aws_access_key }}"
+        secret_key: "{{ aws_secret_key }}"
+        name: "{{ common_tags.project_name }}-{{ common_tags.project_environment }}-ssh_access"
+        description: "{{ common_tags.project_name }}-{{ common_tags.project_environment }}-ssh_access" 
+        vpc_id: "{{ default_vpc_id }}"
+        tags: "{{ common_tags }}"
+        tags:
+          Name: "{{ common_tags.project_name }}-{{ common_tags.project_environment }}-ssh_access"  
+        rules:
+          - proto: tcp
+            from_port: 22
+            to_port: 22
+            cidr_ip: 
+              - 0.0.0.0/0
+            cidr_ipv6:    
+              - ::/0
+      register: aws_sg_remote_return
+
+    - name: "AWS Infra SecurityGroup 80/443"
+      amazon.aws.ec2_security_group:
+        region: "{{ aws_region }}"
+        access_key: "{{ aws_access_key }}"
+        secret_key: "{{ aws_secret_key }}"
+        name: "{{ common_tags.project_name }}-{{ common_tags.project_environment }}-webserver_access"
+        description: "{{ common_tags.project_name }}-{{ common_tags.project_environment }}-webserver_access"
+        vpc_id: "{{ default_vpc_id }}"
+        tags: "{{ common_tags }}"
+        tags:
+          Name: "{{ common_tags.project_name }}-{{ common_tags.project_environment }}-webserver_access"
+        rules:
+          - proto: tcp
+            from_port: 80
+            to_port: 80
+            cidr_ip:
+              - 0.0.0.0/0
+            cidr_ipv6:
+              - ::/0
+
+          - proto: tcp
+            from_port: 443
+            to_port: 443
+            cidr_ip:
+              - 0.0.0.0/0
+            cidr_ipv6:
+              - ::/0
+      register: aws_sg_webserver_return
+
+
+    - name: "AWS Infra EC2 Instance Creation"
+      amazon.aws.ec2_instance:
+        name: "{{ common_tags.project_name }}-{{ common_tags.project_environment }}-instance"
+        key_name: "{{ aws_keypair_return.key.name }}"
+        instance_type: t2.micro
+        security_groups:
+          - "{{ aws_sg_remote_return.group_id }}"
+          - "{{ aws_sg_webserver_return.group_id }}"
+        image_id: "{{ ami_id }}"
+        tags: "{{ common_tags }}"
+        region: "{{ aws_region }}"
+        access_key: "{{ aws_access_key }}"
+        secret_key: "{{ aws_secret_key }}"
+        exact_count: 2
